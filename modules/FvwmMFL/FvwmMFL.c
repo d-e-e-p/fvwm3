@@ -46,7 +46,8 @@ struct fvwm_msg;
 
 struct client {
 	struct bufferevent	*comms;
-	int			 flags;
+	int			 flags_m;
+	int			 flags_mx;
 	struct fvwm_msg		*fm;
 
 	TAILQ_ENTRY(client)	 entry;
@@ -365,16 +366,27 @@ client_set_interest(struct client *c, const char *event)
 	}
 
 	for (i = 0; i < (sizeof(etf) / sizeof(etf[0])); i++) {
+		int	 f = etf[i].flag;
+
 		if (strcmp(etf[i].event, event) == 0) {
 			changed = true;
-			if (flag_type == EFLAGSET)
-				c->flags |= etf[i].flag;
-			else
-				c->flags &= ~etf[i].flag;
+			if (flag_type == EFLAGSET) {
+				if (f & M_EXTENDED_MSG) {
+					fprintf(stderr, "Setting for extended: %s\n", event);
+					c->flags_mx |= (f & ~M_EXTENDED_MSG);
+				} else
+					c->flags_m |= f;
+			} else {
+				if (f & M_EXTENDED_MSG)
+					c->flags_mx &= ~f;
+				else
+					c->flags_m &= ~f;
+			}
 		}
 	}
 
-	SetSyncMask(fc.fd, c->flags);
+	SetSyncMask(fc.fd, c->flags_m & ~M_EXTENDED_MSG);
+	SetSyncMask(fc.fd, c->flags_mx|M_EXTENDED_MSG);
 
 	return (changed);
 }
@@ -390,8 +402,10 @@ broadcast_to_client(FvwmPacket *packet)
 	unsigned long		 type =	packet->type;
 	unsigned long		 length = packet->size;
 
+	type &= ~M_EXTENDED_MSG;
 	TAILQ_FOREACH(c, &clientq, entry) {
-		if (!(c->flags & type))
+		int flags = c->flags_m | (c->flags_mx & ~M_EXTENDED_MSG);
+		if (!(flags & type))
 			continue;
 
 		if ((fm = handle_packet(type, body, length)) == NULL)
